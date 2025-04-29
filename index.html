@@ -42,6 +42,8 @@
     let gameMode = '';
     let peer, conn, isHost = false;
     let isMyTurn = true;
+    let mySymbol = 'X';
+    let opponentSymbol = 'O';
 
     function createBoard() {
       board.innerHTML = '';
@@ -57,29 +59,45 @@
 
     function handleMove(i) {
       if (cells[i].textContent || (gameMode === 'multi' && !isMyTurn)) return;
-      cells[i].textContent = currentPlayer;
+      cells[i].textContent = mySymbol;
       if (checkWinner()) {
-        statusDiv.textContent = `${currentPlayer} победил!`;
+        statusDiv.textContent = `${mySymbol} победил!`;
+        if (gameMode === 'multi') conn.send({ move: i, gameOver: true });
         return;
       }
       if (Array.from(cells).every(c => c.textContent)) {
         statusDiv.textContent = 'Ничья!';
+        if (gameMode === 'multi') conn.send({ move: i, draw: true });
         return;
       }
       if (gameMode === 'multi') {
         conn.send({ move: i });
         isMyTurn = false;
       }
-      currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+      updateTurnSymbols();
       updateStatus();
-      if (gameMode === 'single' && currentPlayer === 'O') {
+      if (gameMode === 'single' && mySymbol === 'X') {
         setTimeout(botMove, 300);
       }
     }
 
+    function updateTurnSymbols() {
+      currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+    }
+
     function botMove() {
       const bestMove = getBestMove();
-      handleMove(bestMove);
+      cells[bestMove].textContent = 'O';
+      if (checkWinner()) {
+        statusDiv.textContent = `O победил!`;
+        return;
+      }
+      if (Array.from(cells).every(c => c.textContent)) {
+        statusDiv.textContent = 'Ничья!';
+        return;
+      }
+      currentPlayer = 'X';
+      updateStatus();
     }
 
     function getBestMove() {
@@ -173,6 +191,8 @@
 
     function startSinglePlayer() {
       gameMode = 'single';
+      mySymbol = 'X';
+      opponentSymbol = 'O';
       createBoard();
       updateStatus();
     }
@@ -180,13 +200,18 @@
     function hostGame() {
       gameMode = 'multi';
       isHost = true;
+      mySymbol = 'X';
+      opponentSymbol = 'O';
       peer = new Peer();
       peer.on('open', id => {
         alert(`Ваш ID: ${id}`);
       });
       peer.on('connection', connection => {
         conn = connection;
-        setupConnection();
+        conn.on('open', () => {
+          conn.send({ type: 'init', symbol: 'O' });
+          setupConnection();
+        });
       });
       createBoard();
       updateStatus();
@@ -204,15 +229,27 @@
       });
       isHost = false;
       createBoard();
-      isMyTurn = false;
-      updateStatus();
     }
 
     function setupConnection() {
       conn.on('data', data => {
-        if (data.move !== undefined) {
-          handleMove(data.move);
+        if (data.type === 'init') {
+          mySymbol = data.symbol;
+          opponentSymbol = mySymbol === 'X' ? 'O' : 'X';
+          isMyTurn = mySymbol === 'X';
+          updateStatus();
+        } else if (data.move !== undefined) {
+          cells[data.move].textContent = opponentSymbol;
+          if (data.gameOver) {
+            statusDiv.textContent = `${opponentSymbol} победил!`;
+            return;
+          }
+          if (data.draw) {
+            statusDiv.textContent = 'Ничья!';
+            return;
+          }
           isMyTurn = true;
+          updateTurnSymbols();
           updateStatus();
         }
       });

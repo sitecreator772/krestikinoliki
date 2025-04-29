@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Крестики-нолики</title>
+  <style>
+    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+    .board { display: grid; grid-template-columns: repeat(3, 100px); gap: 5px; margin-top: 20px; }
+    .cell {
+      width: 100px; height: 100px;
+      background: #f0f0f0; display: flex;
+      align-items: center; justify-content: center;
+      font-size: 48px; cursor: pointer;
+    }
+    #status { margin-top: 20px; font-size: 18px; }
+    #controls { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Крестики-нолики</h1>
+
+  <div id="mode-select">
+    <button onclick="startSinglePlayer()">Одиночный режим</button>
+    <button onclick="hostGame()">Создать игру</button>
+    <input type="text" id="join-id" placeholder="ID игры" />
+    <button onclick="joinGame()">Подключиться</button>
+  </div>
+
+  <div class="board" id="board"></div>
+  <div id="status"></div>
+  <div id="controls">
+    <button onclick="resetGame()">Сбросить</button>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script>
+    const board = document.getElementById('board');
+    const statusDiv = document.getElementById('status');
+    const cells = [];
+    let currentPlayer = 'X';
+    let gameMode = '';
+    let peer, conn, isHost = false;
+    let isMyTurn = true;
+
+    function createBoard() {
+      board.innerHTML = '';
+      for (let i = 0; i < 9; i++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.index = i;
+        cell.onclick = () => handleMove(i);
+        cells[i] = cell;
+        board.appendChild(cell);
+      }
+    }
+
+    function handleMove(i) {
+      if (cells[i].textContent || (gameMode === 'multi' && !isMyTurn)) return;
+      cells[i].textContent = currentPlayer;
+      if (checkWinner()) {
+        statusDiv.textContent = `${currentPlayer} победил!`;
+        return;
+      }
+      if (Array.from(cells).every(c => c.textContent)) {
+        statusDiv.textContent = 'Ничья!';
+        return;
+      }
+      if (gameMode === 'multi') {
+        conn.send({ move: i });
+        isMyTurn = false;
+      }
+      currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+      updateStatus();
+      if (gameMode === 'single' && currentPlayer === 'O') {
+        setTimeout(botMove, 300);
+      }
+    }
+
+    function botMove() {
+      const bestMove = getBestMove();
+      handleMove(bestMove);
+    }
+
+    function getBestMove() {
+      const boardState = cells.map(cell => cell.textContent || '');
+      function minimax(board, depth, isMaximizing) {
+        const winner = checkWinnerSim(board);
+        if (winner === 'O') return 10 - depth;
+        if (winner === 'X') return depth - 10;
+        if (!board.includes('')) return 0;
+
+        if (isMaximizing) {
+          let best = -Infinity;
+          for (let i = 0; i < 9; i++) {
+            if (!board[i]) {
+              board[i] = 'O';
+              best = Math.max(best, minimax(board, depth + 1, false));
+              board[i] = '';
+            }
+          }
+          return best;
+        } else {
+          let best = Infinity;
+          for (let i = 0; i < 9; i++) {
+            if (!board[i]) {
+              board[i] = 'X';
+              best = Math.min(best, minimax(board, depth + 1, true));
+              board[i] = '';
+            }
+          }
+          return best;
+        }
+      }
+
+      let bestScore = -Infinity;
+      let move = 0;
+      for (let i = 0; i < 9; i++) {
+        if (!boardState[i]) {
+          boardState[i] = 'O';
+          let score = minimax(boardState, 0, false);
+          boardState[i] = '';
+          if (score > bestScore) {
+            bestScore = score;
+            move = i;
+          }
+        }
+      }
+      return move;
+    }
+
+    function checkWinnerSim(board) {
+      const wins = [
+        [0,1,2],[3,4,5],[6,7,8],
+        [0,3,6],[1,4,7],[2,5,8],
+        [0,4,8],[2,4,6]
+      ];
+      for (const [a, b, c] of wins) {
+        if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+          return board[a];
+        }
+      }
+      return null;
+    }
+
+    function checkWinner() {
+      const combos = [
+        [0,1,2],[3,4,5],[6,7,8],
+        [0,3,6],[1,4,7],[2,5,8],
+        [0,4,8],[2,4,6]
+      ];
+      return combos.some(([a,b,c]) =>
+        cells[a].textContent &&
+        cells[a].textContent === cells[b].textContent &&
+        cells[a].textContent === cells[c].textContent
+      );
+    }
+
+    function resetGame() {
+      createBoard();
+      currentPlayer = 'X';
+      isMyTurn = isHost || gameMode !== 'multi';
+      updateStatus();
+    }
+
+    function updateStatus() {
+      if (gameMode === 'multi') {
+        statusDiv.textContent = isMyTurn ? 'Ваш ход' : 'Ход соперника';
+      } else {
+        statusDiv.textContent = `Ходит ${currentPlayer}`;
+      }
+    }
+
+    function startSinglePlayer() {
+      gameMode = 'single';
+      createBoard();
+      updateStatus();
+    }
+
+    function hostGame() {
+      gameMode = 'multi';
+      isHost = true;
+      peer = new Peer();
+      peer.on('open', id => {
+        alert(`Ваш ID: ${id}`);
+      });
+      peer.on('connection', connection => {
+        conn = connection;
+        setupConnection();
+      });
+      createBoard();
+      updateStatus();
+    }
+
+    function joinGame() {
+      gameMode = 'multi';
+      const id = document.getElementById('join-id').value;
+      peer = new Peer();
+      peer.on('open', () => {
+        conn = peer.connect(id);
+        conn.on('open', () => {
+          setupConnection();
+        });
+      });
+      isHost = false;
+      createBoard();
+      isMyTurn = false;
+      updateStatus();
+    }
+
+    function setupConnection() {
+      conn.on('data', data => {
+        if (data.move !== undefined) {
+          handleMove(data.move);
+          isMyTurn = true;
+          updateStatus();
+        }
+      });
+    }
+  </script>
+</body>
+</html>
